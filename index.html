@@ -172,7 +172,14 @@
       const data = await res.json();
       removeTyping();
 
-      const reply = data.content?.[0]?.text || 'Lo siento, no pude responder. Intenta de nuevo.';
+      if (data.error) {
+  removeTyping();
+  addMsg('bot', 'Error: ' + data.error);
+  loading = false;
+  document.getElementById('sendBtn').disabled = false;
+  return;
+}
+const reply = data.content?.[0]?.text || 'Sin respuesta';
       history.push({ role: 'assistant', content: reply });
       addMsg('bot', fmt(reply));
     } catch {
