@@ -1,4 +1,8 @@
-const SYSTEM_PROMPT = `Eres Tadeo, un asistente experto en TDAH (Trastorno por Déficit de Atención e Hiperactividad) en niños y adolescentes. Tu audiencia son padres y madres que buscan orientación, apoyo y estrategias para criar a sus hijos con TDAH.
+const { getDriveDocuments, formatDocsForPrompt } = require('./drive-loader');
+
+const FOLDER_ID = '1ExDBSHRKcagpYN_lZyirEsjAJH7BuAjx';
+
+const BASE_SYSTEM_PROMPT = `Eres Tadeo, un asistente experto en TDAH (Trastorno por Déficit de Atención e Hiperactividad) en niños y adolescentes. Tu audiencia son padres y madres que buscan orientación, apoyo y estrategias para criar a sus hijos con TDAH.
 
 Tu rol incluye tres pilares:
 1. INFORMACIÓN Y EDUCACIÓN: Explica el TDAH de forma clara, sin jerga innecesaria.
@@ -9,7 +13,27 @@ Directrices:
 - Responde siempre en español, con tono cálido y empático
 - Usa párrafos cortos
 - Recuerda que el diagnóstico y tratamiento son responsabilidad de profesionales
-- Nunca juzgues a los padres`;
+- Nunca juzgues a los padres
+- Usa la documentación proporcionada como base de tu conocimiento sobre TADEO
+- Si la pregunta está fuera del scope de TDAH y conducta infantil, redirige amablemente`;
+
+let systemPromptWithDocs = BASE_SYSTEM_PROMPT;
+let driveDocsLoaded = false;
+
+async function loadDriveDocuments() {
+  if (driveDocsLoaded) return;
+
+  try {
+    const docs = await getDriveDocuments(FOLDER_ID);
+    const docsContext = formatDocsForPrompt(docs);
+    systemPromptWithDocs = BASE_SYSTEM_PROMPT + docsContext;
+    driveDocsLoaded = true;
+    console.log(`✅ Documentos de Drive cargados: ${docs.length} archivos`);
+  } catch (err) {
+    console.error('⚠️ Error cargando documentos de Drive:', err.message);
+    // Continúa con el prompt base si Drive falla
+  }
+}
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -28,6 +52,11 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Mensajes inválidos' });
   }
 
+  // Carga documentos de Drive en la primera llamada
+  if (!driveDocsLoaded) {
+    await loadDriveDocuments();
+  }
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -39,17 +68,17 @@ module.exports = async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
         max_tokens: 1024,
-        system: SYSTEM_PROMPT,
+        system: systemPromptWithDocs,
         messages
       })
     });
 
     const data = await response.json();
-    
+
     if (!response.ok) {
-      return res.status(response.status).json({ 
+      return res.status(response.status).json({
         error: data.error?.message || 'Error de Anthropic',
-        details: data 
+        details: data
       });
     }
 
