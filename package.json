@@ -1,0 +1,11 @@
+{
+  "name": "tadeo-bot",
+  "version": "1.0.0",
+  "description": "Chatbot inteligente para familias con TDAH",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "googleapis": "^118.0.0"
+  }
+}
