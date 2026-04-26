@@ -102,7 +102,7 @@ function formatDocsForPrompt(docs) {
 
   let formatted = '\n\n=== CONTEXTO DE TADEO (desde Drive) ===\n';
   for (const doc of docs) {
-    formatted += `\n## ${doc.name}\n${doc.content.substring(0, 4000)}\n`;
+    formatted += `\n## ${doc.name}\n${doc.content.substring(0, 15000)}\n`;
   }
   formatted += '\n=== FIN DEL CONTEXTO ===\n';
 
