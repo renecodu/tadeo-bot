@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const mammoth = require('mammoth');
 
 // Cache para documentos de Drive
 let docsCache = null;
@@ -30,26 +31,37 @@ async function getDriveDocuments(folderId) {
     const authClient = await getServiceAccountAuth();
     const drive = google.drive({ version: 'v3', auth: authClient });
 
-    // Busca archivos Word en la carpeta
+    // Busca Google Docs nativos Y archivos Word .docx subidos
     const response = await drive.files.list({
-      q: `'${folderId}' in parents and mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document' and trashed=false`,
+      q: `'${folderId}' in parents and (mimeType='application/vnd.google-apps.document' or mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document') and trashed=false`,
       spaces: 'drive',
-      fields: 'files(id, name, modifiedTime)',
+      fields: 'files(id, name, mimeType, modifiedTime)',
       pageSize: 50
     });
 
     const files = response.data.files || [];
     const docs = [];
 
-    // Lee el contenido de cada documento
+    // Lee el contenido de cada documento según su tipo
     for (const file of files) {
       try {
-        const content = await downloadFileAsText(drive, file.id);
-        docs.push({
-          name: file.name,
-          content: content,
-          modifiedTime: file.modifiedTime
-        });
+        let content = null;
+
+        if (file.mimeType === 'application/vnd.google-apps.document') {
+          // Google Doc nativo → export como texto plano
+          content = await exportGoogleDoc(drive, file.id);
+        } else if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+          // Word .docx subido → descargar binario y extraer texto con mammoth
+          content = await extractDocxText(drive, file.id);
+        }
+
+        if (content) {
+          docs.push({
+            name: file.name,
+            content: content,
+            modifiedTime: file.modifiedTime
+          });
+        }
       } catch (err) {
         console.error(`Error leyendo ${file.name}:`, err.message);
       }
@@ -59,6 +71,7 @@ async function getDriveDocuments(folderId) {
     docsCache = docs;
     cacheTimestamp = Date.now();
 
+    console.log(`✅ Documentos de Drive cargados: ${docs.length} archivos`);
     return docs;
   } catch (err) {
     console.error('Error en getDriveDocuments:', err.message);
@@ -66,17 +79,22 @@ async function getDriveDocuments(folderId) {
   }
 }
 
-async function downloadFileAsText(drive, fileId) {
-  try {
-    const response = await drive.files.export({
-      fileId: fileId,
-      mimeType: 'text/plain'
-    });
-    return response.data;
-  } catch (err) {
-    console.error(`Error exportando ${fileId}:`, err.message);
-    throw err;
-  }
+async function exportGoogleDoc(drive, fileId) {
+  const response = await drive.files.export({
+    fileId: fileId,
+    mimeType: 'text/plain'
+  });
+  return response.data;
+}
+
+async function extractDocxText(drive, fileId) {
+  const response = await drive.files.get(
+    { fileId: fileId, alt: 'media' },
+    { responseType: 'arraybuffer' }
+  );
+  const buffer = Buffer.from(response.data);
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value;
 }
 
 function formatDocsForPrompt(docs) {
@@ -84,7 +102,7 @@ function formatDocsForPrompt(docs) {
 
   let formatted = '\n\n=== CONTEXTO DE TADEO (desde Drive) ===\n';
   for (const doc of docs) {
-    formatted += `\n## ${doc.name}\n${doc.content.substring(0, 2000)}...\n`;
+    formatted += `\n## ${doc.name}\n${doc.content.substring(0, 4000)}\n`;
   }
   formatted += '\n=== FIN DEL CONTEXTO ===\n';
 
