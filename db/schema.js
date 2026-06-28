@@ -16,10 +16,13 @@
 const STATEMENTS = [
   // --------------------------------------------------------------------------
   // USUARIOS — el papá o mamá que paga la suscripción
+  // Identidad interina por dispositivo (dispositivo_id) hasta que haya login
+  // con Hotmart, momento en que se completa email/hotmart_codigo.
   // --------------------------------------------------------------------------
   `CREATE TABLE IF NOT EXISTS usuarios (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    email           TEXT UNIQUE NOT NULL,
+    dispositivo_id  TEXT,                           -- identidad interina (navegador)
+    email           TEXT UNIQUE,                    -- se completa al integrar Hotmart
     nombre          TEXT,
     hotmart_codigo  TEXT UNIQUE,                    -- identificador del suscriptor en Hotmart
     estado          TEXT NOT NULL DEFAULT 'trial',  -- 'trial' | 'activo' | 'cancelado'
@@ -27,6 +30,10 @@ const STATEMENTS = [
     creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
     actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Migraciones idempotentes para bases que ya existían con el esquema viejo:
+  `ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS dispositivo_id TEXT`,
+  `ALTER TABLE usuarios ALTER COLUMN email DROP NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_dispositivo ON usuarios(dispositivo_id)`,
 
   // --------------------------------------------------------------------------
   // NIÑOS — cada hijo/a registrado (un usuario puede tener varios)
@@ -34,7 +41,7 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS ninos (
     id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     usuario_id        BIGINT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
-    nombre            TEXT NOT NULL,
+    nombre            TEXT,           -- nullable: se descubre durante la conversación
     fecha_nacimiento  DATE,
     perfil            TEXT,           -- notas del papá: diagnóstico, medicación, etc.
     -- *** El corazón de la "memoria del niño" ***
@@ -44,6 +51,8 @@ const STATEMENTS = [
     creado_en         TIMESTAMPTZ NOT NULL DEFAULT now(),
     actualizado_en    TIMESTAMPTZ NOT NULL DEFAULT now()
   )`,
+  // Migración idempotente: en bases viejas, nombre era obligatorio.
+  `ALTER TABLE ninos ALTER COLUMN nombre DROP NOT NULL`,
   `CREATE INDEX IF NOT EXISTS idx_ninos_usuario ON ninos(usuario_id)`,
 
   // --------------------------------------------------------------------------
