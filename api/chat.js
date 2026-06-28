@@ -91,7 +91,17 @@ module.exports = async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
         max_tokens: 700,
-        system: systemPromptWithDocs,
+        // El system prompt + base de conocimiento de Drive son fijos y se repiten
+        // en cada mensaje. Marcándolos como cacheables, Anthropic los procesa una
+        // vez y los sirve a ~0.1x del precio en las siguientes llamadas (ahorro ~90%
+        // sobre esa parte repetida). El TTL del cache es de 5 minutos.
+        system: [
+          {
+            type: 'text',
+            text: systemPromptWithDocs,
+            cache_control: { type: 'ephemeral' }
+          }
+        ],
         messages
       })
     });
