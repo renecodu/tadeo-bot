@@ -327,7 +327,21 @@
 
 <script>
 const STORAGE_KEY = 'tadeo_messages';
+const DEVICE_KEY = 'tadeo_device_id';
 const API_URL = '/api/chat';
+
+// Identidad interina de la familia: un código propio por navegador, persistente.
+// Cuando exista login con Hotmart, este usuario se vincula a su cuenta.
+function getDeviceId() {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) ||
+         ('dev-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
+const DEVICE_ID = getDeviceId();
 
 let messages = [];
 const chatInner = document.getElementById('chatInner');
@@ -339,7 +353,7 @@ const chatArea = document.getElementById('chatArea');
 
 // Cargar mensajes guardados (sesión actual)
 try {
-  const saved = sessionStorage.getItem(STORAGE_KEY);
+  const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     messages = JSON.parse(saved);
     if (messages.length > 0) {
@@ -396,7 +410,7 @@ function scrollToBottom() {
 }
 
 function saveMessages() {
-  try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages)); } catch(e) {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages)); } catch(e) {}
 }
 
 async function sendMessage(text) {
@@ -422,7 +436,7 @@ async function sendMessage(text) {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages })
+      body: JSON.stringify({ messages, dispositivoId: DEVICE_ID })
     });
 
     const data = await res.json();
@@ -454,7 +468,7 @@ function sendSuggestion(text) {
 function resetChat() {
   if (messages.length === 0 || confirm('¿Empezar una nueva conversación? Se va a perder lo actual.')) {
     messages = [];
-    sessionStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY);
     chatInner.querySelectorAll('.msg').forEach(m => m.remove());
     welcome.style.display = '';
   }

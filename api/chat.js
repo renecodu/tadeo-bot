@@ -1,4 +1,5 @@
 const { getDriveDocuments, formatDocsForPrompt } = require('./drive-loader');
+const { abrirMemoria, bloqueDeMemoria, cerrarMemoria } = require('./memory');
 
 const FOLDER_ID = '1ExDBSHRKcagpYN_lZyirEsjAJH7BuAjx';
 
@@ -21,7 +22,7 @@ Tienes 8 modos guiados. No los anuncias formalmente, los activas según lo que e
 1. Modo Crisis — cuando el niño está fuera de control: bajas la intensidad, das pasos concretos en segundos.
 2. Modo Colegio — redactas mensajes a profesoras, ayudas a preparar reuniones, registrar incidentes.
 3. Modo Rutinas — diseñas rutinas de 3-5 pasos según edad y perfil del niño.
-4. Modo Bitácora — el padre te cuenta lo que pasó, tú lo organizas en palabras claras (ojo: no se guarda entre sesiones, ver "límites").
+4. Modo Bitácora — el padre te cuenta lo que pasó, tú lo organizas en palabras claras y lo recuerdas para las próximas conversaciones.
 5. Modo Medicación — ordenas dudas, registras observaciones para la próxima consulta. NUNCA das dosis, recetas ni cambios de tratamiento.
 6. Modo Especialista — preparas la minuta, las preguntas y el resumen para llevar a la próxima cita médica.
 7. Conducta y Límites — estrategias prácticas para poner reglas sin pelear, manejar oposición, reparar después.
@@ -34,7 +35,7 @@ NO listas todos los modos al inicio. NO suenas a menú de call center.
 
 — LÍMITES HONESTOS —
 No diagnosticas. No recetas. No reemplazas a psicólogos, neurólogos ni pediatras. Eres el copiloto entre consultas.
-Eres una versión inicial (v1.0). NO guardas conversaciones entre sesiones, NO tienes login, NO almacenas bitácoras de forma persistente. Si el usuario te pregunta directo si guardas información, sé honesto: "Todavía no. Soy v1.0, las conversaciones no se guardan al cerrar. Estamos construyendo eso. Por ahora soy un chat 24/7 con respaldo profesional, pero la persistencia llega pronto."
+Ahora SÍ recuerdas a la familia entre conversaciones: si más abajo aparece una sección "=== MEMORIA DE ESTA FAMILIA ===", esa es tu memoria real de charlas anteriores. Si el usuario te pregunta si guardas información, responde con calidez y honestidad: "Sí, recuerdo lo que hablamos para poder acompañarte mejor con el tiempo. Tu información es privada." Si NO aparece la sección de memoria todavía (es la primera vez o aún no hay nada que recordar), no inventes recuerdos.
 Si te preguntan algo claramente fuera del scope (TDAH, crianza, emoción parental, vida familiar), redirige con amabilidad.
 
 — BASE DE CONOCIMIENTO —
@@ -70,7 +71,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Falta ANTHROPIC_API_KEY en Vercel' });
   }
 
-  const { messages } = req.body;
+  const { messages, dispositivoId } = req.body;
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'Mensajes inválidos' });
   }
@@ -80,7 +81,30 @@ module.exports = async function handler(req, res) {
     await loadDriveDocuments();
   }
 
+  // --- MEMORIA: abrir el registro de la familia y guardar el mensaje nuevo ---
+  // Tomamos el último mensaje del usuario (lo recién enviado).
+  const ultimo = messages[messages.length - 1];
+  const ultimoMensajeUsuario =
+    ultimo && ultimo.role === 'user' ? ultimo.content : null;
+  // Nunca rompe el chat: si falla o no hay base, devuelve null y seguimos igual.
+  const estadoMemoria = await abrirMemoria(dispositivoId, ultimoMensajeUsuario);
+
   try {
+    // El system se arma en bloques:
+    //   1) el prompt grande + Drive, CACHEADO (compartido entre todos, ahorro ~90%)
+    //   2) la memoria de ESTA familia, chica y sin cachear (va después del cache)
+    const systemBloques = [
+      {
+        type: 'text',
+        text: systemPromptWithDocs,
+        cache_control: { type: 'ephemeral' }
+      }
+    ];
+    const memoria = bloqueDeMemoria(estadoMemoria);
+    if (memoria) {
+      systemBloques.push({ type: 'text', text: memoria });
+    }
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -91,17 +115,7 @@ module.exports = async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
         max_tokens: 700,
-        // El system prompt + base de conocimiento de Drive son fijos y se repiten
-        // en cada mensaje. Marcándolos como cacheables, Anthropic los procesa una
-        // vez y los sirve a ~0.1x del precio en las siguientes llamadas (ahorro ~90%
-        // sobre esa parte repetida). El TTL del cache es de 5 minutos.
-        system: [
-          {
-            type: 'text',
-            text: systemPromptWithDocs,
-            cache_control: { type: 'ephemeral' }
-          }
-        ],
+        system: systemBloques,
         messages
       })
     });
@@ -114,6 +128,17 @@ module.exports = async function handler(req, res) {
         details: data
       });
     }
+
+    // --- MEMORIA: guardar la respuesta de Tadeo y refrescar el resumen ---
+    const respuestaTexto =
+      data.content && data.content[0] && data.content[0].text
+        ? data.content[0].text
+        : '';
+    const historialCompleto = respuestaTexto
+      ? messages.concat([{ role: 'assistant', content: respuestaTexto }])
+      : messages;
+    // No rompe la respuesta si falla; el usuario ya tiene su contestación.
+    await cerrarMemoria(estadoMemoria, respuestaTexto, historialCompleto);
 
     return res.status(200).json(data);
   } catch (err) {
